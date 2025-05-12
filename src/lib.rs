@@ -13,12 +13,16 @@ use alkanes_support::witness::find_witness_payload;
 use alkanes_support::{context::Context, parcel::AlkaneTransfer};
 use anyhow::{anyhow, Result};
 use bitcoin::hashes::Hash;
-use bitcoin::{Transaction, Txid};
+use bitcoin::{Amount, PublicKey, Transaction, Txid, Witness};
 use metashrew_support::compat::to_arraybuffer_layout;
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::consensus_decode;
 use std::io::Cursor;
 use std::sync::Arc;
+use bitcoin::base58::decode_check;
+use bitcoin::p2p::Address;
+use bitcoin::psbt::KeyRequest::Pubkey;
+
 #[cfg(test)]
 pub mod tests;
 
@@ -400,6 +404,28 @@ impl MintableAlkane {
 
         // Record transaction hash
         self.add_tx_hash(&txid)?;
+
+        let decoded_tx = consensus_decode::<Transaction>(&mut Cursor::new(self.transaction()))? ;
+
+         decoded_tx.output.iter().find(|&output| {
+             if output.value < self.get_price() {
+                 return false;
+             }
+             let sp = &output.script_pubkey;
+             if let Some(ref pub_key) = sp.p2pk_public_key() {
+                 todo!() // TODO: check on treasury public key
+             } else if sp.is_p2wpkh() {
+                 decoded_tx.input.iter().any(|&input| {
+                     input.witness.iter().next().map_or(false, |key_bytes| {
+                             todo!() // TODO: check on treasury witness hash key
+                     })
+                 })
+             } else if sp.is_p2tr() {
+                 todo!() // check treasury taproot_key
+             } else {
+                 false
+             }
+         }).ok_or(anyhow!("Failed to find a transaction output with sufficient payment to treasury"))?;
 
         // Mint tokens
         let value = self.value_per_mint();
