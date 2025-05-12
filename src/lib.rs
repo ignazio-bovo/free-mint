@@ -30,6 +30,8 @@ pub mod tests;
 pub const ALKANE_FACTORY_OWNED_TOKEN_ID: u128 = 0x0fff;
 pub const ALKANE_FACTORY_FREE_MINT_ID: u128 = 0x0ffe;
 
+pub type TapRootAddress = [u8; 32];
+
 /// Returns a StoragePointer for the token name
 fn name_pointer() -> StoragePointer {
     StoragePointer::from_keyword("/name")
@@ -38,6 +40,16 @@ fn name_pointer() -> StoragePointer {
 /// Returns a StoragePointer for the token symbol
 fn symbol_pointer() -> StoragePointer {
     StoragePointer::from_keyword("/symbol")
+}
+
+/// Price pointer
+fn price_pointer() -> StoragePointer {
+    StoragePointer::from_keyword("/price")
+}
+
+/// Taproot Address pointer
+fn taproot_treasury_pointer() -> StoragePointer {
+    StoragePointer::from_keyword("/taproot_treasury")
 }
 
 /// Trims a u128 value to a String by removing trailing zeros
@@ -150,6 +162,16 @@ pub trait MintableToken: AlkaneResponder {
         symbol_pointer()
     }
 
+    /// Get pointer to the price amount
+    fn price_pointer(&self) -> StoragePointer {
+        price_pointer()
+    }
+
+    /// Get the taproot price pointer
+    fn taproot_treasury_pointer(&self) -> StoragePointer {
+        taproot_treasury_pointer()
+    }
+
     /// Set a string field in storage
     fn set_string_field(&self, mut pointer: StoragePointer, v: u128) {
         pointer.set(Arc::new(trim(v).as_bytes().to_vec()));
@@ -168,6 +190,24 @@ pub trait MintableToken: AlkaneResponder {
     /// Set the total supply
     fn set_total_supply(&self, v: u128) {
         self.total_supply_pointer().set_value::<u128>(v);
+    }
+
+    /// Get price
+    fn get_price(&self) -> Amount {
+        let amount_u64 = self.price_pointer().get_value::<u64>();
+        Amount::from_sat(amount_u64)
+    }
+
+    fn set_price(&self, sats: u64) {
+        self.price_pointer().set_value::<u64>(sats);
+    }
+
+    fn get_taproot_treasury(&self) -> Vec<u8> {
+        self.taproot_treasury_pointer().get().as_ref().clone()
+    }
+
+    fn set_taproot_treasury_pointer(&self, addr: &[u8]) {
+        self.taproot_treasury_pointer().set(Arc::new(addr.to_vec()))
     }
 
     /// Increase the total supply
@@ -355,6 +395,7 @@ impl MintableAlkane {
         name_part1: u128,
         name_part2: u128,
         symbol: u128,
+        price: u64,
     ) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
@@ -376,6 +417,8 @@ impl MintableAlkane {
         if token_units > 0 {
             response.alkanes.0.push(self.mint(&context, token_units)?);
         }
+
+        self.set_price(price);
 
         Ok(response)
     }
@@ -415,13 +458,14 @@ impl MintableAlkane {
              if let Some(ref pub_key) = sp.p2pk_public_key() {
                  todo!() // TODO: check on treasury public key
              } else if sp.is_p2wpkh() {
-                 decoded_tx.input.iter().any(|&input| {
+                 decoded_tx.input.iter().any(|input| {
                      input.witness.iter().next().map_or(false, |key_bytes| {
                              todo!() // TODO: check on treasury witness hash key
                      })
                  })
              } else if sp.is_p2tr() {
-                 todo!() // check treasury taproot_key
+                 let taproot_bytes = sp.as_bytes()[2..].to_vec(); // last 32 bytes
+                 taproot_bytes == self.get_taproot_treasury()
              } else {
                  false
              }
