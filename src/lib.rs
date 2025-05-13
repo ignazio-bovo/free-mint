@@ -206,9 +206,6 @@ pub trait MintableToken: AlkaneResponder {
     }
 
     fn set_treasury_pubkey_compressed(&self, pk: PublicKey) -> Result<()> {
-        if !pk.compressed {
-            return Err(anyhow!("Compressed public key must be compressed bytes"));
-        }
         pk.p2wpkh_script_code()
             .map_err(|_| anyhow!("Failure generating p2wpkh script from pk"))?;
 
