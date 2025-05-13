@@ -12,16 +12,16 @@ use alkanes_support::utils::overflow_error;
 use alkanes_support::witness::find_witness_payload;
 use alkanes_support::{context::Context, parcel::AlkaneTransfer};
 use anyhow::{anyhow, Result};
+use bitcoin::base58::decode_check;
 use bitcoin::hashes::Hash;
+use bitcoin::p2p::Address;
+use bitcoin::psbt::KeyRequest::Pubkey;
 use bitcoin::{Amount, PublicKey, Transaction, Txid, Witness};
 use metashrew_support::compat::to_arraybuffer_layout;
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::consensus_decode;
 use std::io::Cursor;
 use std::sync::Arc;
-use bitcoin::base58::decode_check;
-use bitcoin::p2p::Address;
-use bitcoin::psbt::KeyRequest::Pubkey;
 
 #[cfg(test)]
 pub mod tests;
@@ -29,8 +29,6 @@ pub mod tests;
 /// Constants for token identification
 pub const ALKANE_FACTORY_OWNED_TOKEN_ID: u128 = 0x0fff;
 pub const ALKANE_FACTORY_FREE_MINT_ID: u128 = 0x0ffe;
-
-pub type TapRootAddress = [u8; 32];
 
 /// Returns a StoragePointer for the token name
 fn name_pointer() -> StoragePointer {
@@ -50,6 +48,14 @@ fn price_pointer() -> StoragePointer {
 /// Taproot Address pointer
 fn taproot_treasury_pointer() -> StoragePointer {
     StoragePointer::from_keyword("/taproot_treasury")
+}
+
+fn segwit_treasury_hash_pointer() -> StoragePointer {
+    StoragePointer::from_keyword("/segwit_treasury")
+}
+
+fn treasury_pubkey_pointer() -> StoragePointer {
+    StoragePointer::from_keyword("/pubkey_treasury")
 }
 
 /// Trims a u128 value to a String by removing trailing zeros
@@ -172,6 +178,14 @@ pub trait MintableToken: AlkaneResponder {
         taproot_treasury_pointer()
     }
 
+    fn segwit_treasury_pointer(&self) -> StoragePointer {
+        segwit_treasury_hash_pointer()
+    }
+
+    fn treasury_pubkey_pointer(&self) -> StoragePointer {
+        treasury_pubkey_pointer()
+    }
+
     /// Set a string field in storage
     fn set_string_field(&self, mut pointer: StoragePointer, v: u128) {
         pointer.set(Arc::new(trim(v).as_bytes().to_vec()));
@@ -206,8 +220,39 @@ pub trait MintableToken: AlkaneResponder {
         self.taproot_treasury_pointer().get().as_ref().clone()
     }
 
-    fn set_taproot_treasury_pointer(&self, addr: &[u8]) {
-        self.taproot_treasury_pointer().set(Arc::new(addr.to_vec()))
+    fn set_taproot_treasury_pointer(&self, addr: Vec<u8>) -> Result<()> {
+        if addr.len() == 32 {
+            self.taproot_treasury_pointer().set(Arc::new(addr));
+            Ok(())
+        } else {
+            Err(anyhow!("Compressed public key must be 32 bytes"))
+        }
+    }
+
+    fn get_segwit_treasury_hash(&self) -> Vec<u8> {
+        self.segwit_treasury_pointer().get().as_ref().clone()
+    }
+
+    fn set_segwit_treasury_hash(&self, addr_hash: Vec<u8>) -> Result<()> {
+        if addr_hash.len() == 20 {
+            self.segwit_treasury_pointer().set(Arc::new(hash.to_vec()));
+            Ok(())
+        } else {
+            Err(anyhow!("Segwit hash must be 20 bytes"))
+        }
+    }
+
+    fn get_treasury_pubkey_compressed(&self) -> Vec<u8> {
+        self.treasury_pubkey_pointer().get().as_ref().clone()
+    }
+
+    fn set_treasury_pubkey_compressed(&self, addr: Vec<u8>) -> Result<()>{
+        if addr.len() == 32 {
+            self.treasury_pubkey_pointer().set(Arc::new(addr.to_vec()));
+            Ok(())
+        } else {
+            Err(anyhow!("Compressed public key must be 32 bytes"))
+        }
     }
 
     /// Increase the total supply
@@ -448,28 +493,36 @@ impl MintableAlkane {
         // Record transaction hash
         self.add_tx_hash(&txid)?;
 
-        let decoded_tx = consensus_decode::<Transaction>(&mut Cursor::new(self.transaction()))? ;
+        let decoded_tx = consensus_decode::<Transaction>(&mut Cursor::new(self.transaction()))?;
 
-         decoded_tx.output.iter().find(|&output| {
-             if output.value < self.get_price() {
-                 return false;
-             }
-             let sp = &output.script_pubkey;
-             if let Some(ref pub_key) = sp.p2pk_public_key() {
-                 todo!() // TODO: check on treasury public key
-             } else if sp.is_p2wpkh() {
-                 decoded_tx.input.iter().any(|input| {
-                     input.witness.iter().next().map_or(false, |key_bytes| {
-                             todo!() // TODO: check on treasury witness hash key
-                     })
-                 })
-             } else if sp.is_p2tr() {
-                 let taproot_bytes = sp.as_bytes()[2..].to_vec(); // last 32 bytes
-                 taproot_bytes == self.get_taproot_treasury()
-             } else {
-                 false
-             }
-         }).ok_or(anyhow!("Failed to find a transaction output with sufficient payment to treasury"))?;
+        decoded_tx
+            .output
+            .iter()
+            .find(|&output| {
+                if output.value < self.get_price() {
+                    return false;
+                }
+                let sp = &output.script_pubkey;
+                if let Some(ref pub_key) = sp.p2pk_public_key() {
+                    let compressed_pk = if !pub_key.compressed {
+                        pub_key.to_bytes()[1..34].to_vec()
+                    } else {
+                        pub_key.to_bytes().to_vec()
+                    };
+                    compressed_pk == self.get_treasury_pubkey()
+                 } else if sp.is_p2wpkh() {
+                    let pubkey_hash = sp[4..].as_bytes().to_vec(); // last 20 bytes
+                    pubkey_hash == self.get_segwit_treasury_hash()
+                } else if sp.is_p2tr() {
+                    let taproot_bytes = sp.as_bytes()[4..].to_vec(); // last 32 bytes
+                    taproot_bytes == self.get_taproot_treasury()
+                } else {
+                    false
+                }
+            })
+            .ok_or(anyhow!(
+                "Failed to find a transaction output with sufficient payment to treasury"
+            ))?;
 
         // Mint tokens
         let value = self.value_per_mint();
