@@ -14,9 +14,11 @@ use alkanes_support::{context::Context, parcel::AlkaneTransfer};
 use anyhow::{anyhow, Result};
 use bitcoin::base58::decode_check;
 use bitcoin::hashes::Hash;
+use bitcoin::key::{Secp256k1, TapTweak, UntweakedPublicKey};
 use bitcoin::p2p::Address;
 use bitcoin::psbt::KeyRequest::Pubkey;
-use bitcoin::{Amount, PublicKey, Transaction, Txid, Witness};
+use bitcoin::AddressType::P2wpkh;
+use bitcoin::{Amount, PublicKey, ScriptBuf, Transaction, Txid, Witness};
 use metashrew_support::compat::to_arraybuffer_layout;
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::consensus_decode;
@@ -46,14 +48,6 @@ fn price_pointer() -> StoragePointer {
 }
 
 /// Taproot Address pointer
-fn taproot_treasury_pointer() -> StoragePointer {
-    StoragePointer::from_keyword("/taproot_treasury")
-}
-
-fn segwit_treasury_hash_pointer() -> StoragePointer {
-    StoragePointer::from_keyword("/segwit_treasury")
-}
-
 fn treasury_pubkey_pointer() -> StoragePointer {
     StoragePointer::from_keyword("/pubkey_treasury")
 }
@@ -173,19 +167,6 @@ pub trait MintableToken: AlkaneResponder {
         price_pointer()
     }
 
-    /// Get the taproot price pointer
-    fn taproot_treasury_pointer(&self) -> StoragePointer {
-        taproot_treasury_pointer()
-    }
-
-    fn segwit_treasury_pointer(&self) -> StoragePointer {
-        segwit_treasury_hash_pointer()
-    }
-
-    fn treasury_pubkey_pointer(&self) -> StoragePointer {
-        treasury_pubkey_pointer()
-    }
-
     /// Set a string field in storage
     fn set_string_field(&self, mut pointer: StoragePointer, v: u128) {
         pointer.set(Arc::new(trim(v).as_bytes().to_vec()));
@@ -216,43 +197,25 @@ pub trait MintableToken: AlkaneResponder {
         self.price_pointer().set_value::<u64>(sats);
     }
 
-    fn get_taproot_treasury(&self) -> Vec<u8> {
-        self.taproot_treasury_pointer().get().as_ref().clone()
-    }
-
-    fn set_taproot_treasury_pointer(&self, addr: Vec<u8>) -> Result<()> {
-        if addr.len() == 32 {
-            self.taproot_treasury_pointer().set(Arc::new(addr));
-            Ok(())
-        } else {
-            Err(anyhow!("Compressed public key must be 32 bytes"))
-        }
-    }
-
-    fn get_segwit_treasury_hash(&self) -> Vec<u8> {
-        self.segwit_treasury_pointer().get().as_ref().clone()
-    }
-
-    fn set_segwit_treasury_hash(&self, addr_hash: Vec<u8>) -> Result<()> {
-        if addr_hash.len() == 20 {
-            self.segwit_treasury_pointer().set(Arc::new(hash.to_vec()));
-            Ok(())
-        } else {
-            Err(anyhow!("Segwit hash must be 20 bytes"))
-        }
+    fn treasury_pubkey_pointer(&self) -> StoragePointer {
+        treasury_pubkey_pointer()
     }
 
     fn get_treasury_pubkey_compressed(&self) -> Vec<u8> {
         self.treasury_pubkey_pointer().get().as_ref().clone()
     }
 
-    fn set_treasury_pubkey_compressed(&self, addr: Vec<u8>) -> Result<()>{
-        if addr.len() == 32 {
-            self.treasury_pubkey_pointer().set(Arc::new(addr.to_vec()));
-            Ok(())
-        } else {
-            Err(anyhow!("Compressed public key must be 32 bytes"))
+    fn set_treasury_pubkey_compressed(&self, pk: PublicKey) -> Result<()> {
+        if !pk.compressed {
+            return Err(anyhow!("Compressed public key must be compressed bytes"));
         }
+        pk.p2wpkh_script_code()
+            .map_err(|_| anyhow!("Failure generating p2wpkh script from pk"))?;
+
+        let pk_bytes = pk.to_bytes();
+        self.treasury_pubkey_pointer().set(Arc::new(pk_bytes));
+        
+        Ok(())
     }
 
     /// Increase the total supply
@@ -317,6 +280,8 @@ enum MintableAlkaneMessage {
         name_part2: u128,
         /// Token symbol
         symbol: u128,
+        /// Compressed public key
+        pubkey_compressed: Vec<u8>,
     },
 
     /// Mint new tokens
@@ -441,6 +406,7 @@ impl MintableAlkane {
         name_part2: u128,
         symbol: u128,
         price: u64,
+        pk_compressed_bytes: Vec<u8>, // obtained from PublicKey::serialize
     ) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
@@ -464,6 +430,9 @@ impl MintableAlkane {
         }
 
         self.set_price(price);
+
+        let pk = PublicKey::from_slice(pk_compressed_bytes.as_slice())?;
+        self.set_treasury_pubkey_compressed(pk)?;
 
         Ok(response)
     }
@@ -502,20 +471,20 @@ impl MintableAlkane {
                 if output.value < self.get_price() {
                     return false;
                 }
+
                 let sp = &output.script_pubkey;
+                let pk_compressed =
+                    PublicKey::from_slice(&self.get_treasury_pubkey_compressed()).expect("pubkey deserialization shouldn't fail");
+                
                 if let Some(ref pub_key) = sp.p2pk_public_key() {
-                    let compressed_pk = if !pub_key.compressed {
-                        pub_key.to_bytes()[1..34].to_vec()
-                    } else {
-                        pub_key.to_bytes().to_vec()
-                    };
-                    compressed_pk == self.get_treasury_pubkey()
-                 } else if sp.is_p2wpkh() {
-                    let pubkey_hash = sp[4..].as_bytes().to_vec(); // last 20 bytes
-                    pubkey_hash == self.get_segwit_treasury_hash()
+                    pub_key == &pk_compressed
+                } else if sp.is_p2wpkh() {
+                    let expected_script_bytes =
+                        &pk_compressed.p2wpkh_script_code().expect("p2wpkh script deserialization shouldn't fail");
+                    expected_script_bytes == sp
                 } else if sp.is_p2tr() {
-                    let taproot_bytes = sp.as_bytes()[4..].to_vec(); // last 32 bytes
-                    taproot_bytes == self.get_taproot_treasury()
+                    let expected_script = &ScriptBuf::new_p2tr(&Secp256k1::new(), UntweakedPublicKey::from(pk_compressed),  None);
+                    expected_script == sp
                 } else {
                     false
                 }
