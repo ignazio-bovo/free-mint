@@ -26,6 +26,7 @@ use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::consensus_decode;
 use std::io::Cursor;
 use std::sync::Arc;
+use metashrew_support::byte_view::ByteView;
 
 #[cfg(test)]
 pub mod tests;
@@ -327,6 +328,18 @@ enum MintableAlkaneMessage {
     #[opcode(1000)]
     #[returns(Vec<u8>)]
     GetData,
+
+    /// Get the token price in sats
+    #[opcode(1001)]
+    #[returns(Vec<u8>)]
+    GetTokenPrice,
+
+    // /// Get the token price in sats
+    // #[opcode(1002)]
+    // SetTokenPrice {
+    //     /// Price for the mint
+    //     price: u128,
+    // },
 }
 
 impl MintableAlkane {
@@ -611,6 +624,25 @@ impl MintableAlkane {
 
         Ok(response)
     }
+
+
+    /// Get token price
+    fn get_token_price(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        response.data = self.get_price().to_sat().to_bytes();
+        Ok(response)
+    }
+
+    // TODO: investigate permission model
+    // fn set_token_price(&self, price: u128) -> Result<CallResponse> {
+    //     let context = self.context()?;
+    //     let mut response = CallResponse::forward(&context.incoming_alkanes);
+    //
+    //     self.set_token_price(price)?;
+    //
+    //     Ok(response)
+    // }
 }
 
 impl AlkaneResponder for MintableAlkane {}

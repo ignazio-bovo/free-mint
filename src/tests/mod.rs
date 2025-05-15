@@ -1,10 +1,10 @@
 use bitcoin::key::{Keypair, Secp256k1};
 use bitcoin::secp256k1::PublicKey;
-// use wasm_bindgen_test::wasm_bindgen_test;
-//
-// pub mod free_mint_test_integration;
-// pub mod free_mint_test_unit_wasm;
-// pub mod std;
+use wasm_bindgen_test::wasm_bindgen_test;
+
+pub mod free_mint_test_integration;
+pub mod free_mint_test_unit_wasm;
+pub mod std;
 
 #[cfg(test)]
 mod tests {

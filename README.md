@@ -1,4 +1,4 @@
-# free-mint
+# paid-mint
 
 These are the sources for the template deployed at [4, 797].
 
@@ -6,7 +6,7 @@ This alkane is adapted from earlier testing versions by the same name, but suita
 
 ## Overview
 
-This contract implements a token with free mint capabilities using the alkane framework. It includes security features such as:
+This contract implements a token with  mint capabilities using the alkane framework. It includes security features such as:
 
 - Proper initialization guard via observe_initialization()
 - Transaction hash validation to enforce one mint per transaction
@@ -16,7 +16,7 @@ This contract implements a token with free mint capabilities using the alkane fr
 ## Features
 
 - Standard token functionality (name, symbol, total supply)
-- Free mint capabilities with configurable parameters
+- Paid mint capabilities with configurable parameters
 - Transaction-based mint limits
 - Supply cap enforcement
 - Comprehensive view functions
@@ -45,6 +45,10 @@ The contract implements all required opcodes:
      - cap: Max amount of times the token can be minted
      - name: Token name
      - symbol: Token symbol
+     - price: Token price
+     - treasury key version : version byte of the treasury key
+     - treasury first half : first 16 bytes of the treasury key (compressed)
+     - treasury last half : last 16 bytes of the treasury key (compressed)
 - 77: MintTokens()
 - 88: SetNameAndSymbol(name, symbol)
 - 99: GetName() -> String
