@@ -2,11 +2,12 @@ use alkanes_runtime::runtime::AlkaneResponder;
 use anyhow::Result;
 use bitcoin::Txid;
 use std::str::FromStr;
+use crate::{MintableAlkane, TokenName};
 
-mod mock;
-use mock::{MockAlkaneResponder, MockContext};
-
-use free_mint::{MintableAlkane, MintableToken, TokenName};
+#[test]
+fn test_public_key_serialisation_and_deserialisation() -> Result<()> {
+    todo!()
+}
 
 #[test]
 fn test_initialization() -> Result<()> {

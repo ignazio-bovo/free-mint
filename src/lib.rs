@@ -4,6 +4,8 @@
 //! current best practices and security patterns while providing full functionality
 //! of a standard token plus free mint capabilities.
 
+extern crate core;
+
 use alkanes_runtime::storage::StoragePointer;
 use alkanes_runtime::{declare_alkane, message::MessageDispatch, runtime::AlkaneResponder};
 use alkanes_support::gz;
@@ -277,8 +279,14 @@ enum MintableAlkaneMessage {
         name_part2: u128,
         /// Token symbol
         symbol: u128,
-        /// Compressed public key
-        pubkey_compressed: Vec<u8>,
+        /// Price for the mint
+        price: u128,
+        /// Compressed public key version 1 byte
+        pk_version: u128,
+        /// Compressed public key first 16 bytes (big endian)
+        pk_part1: u128,
+        /// Compressed public key last 16 bytes (big endian)
+        pk_part2: u128,
     },
 
     /// Mint new tokens
@@ -402,8 +410,10 @@ impl MintableAlkane {
         name_part1: u128,
         name_part2: u128,
         symbol: u128,
-        price: u64,
-        pk_compressed_bytes: Vec<u8>, // obtained from PublicKey::serialize
+        price: u128,
+        pk_version: u128,
+        pk_part1: u128,
+        pk_part2: u128,
     ) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
@@ -426,12 +436,27 @@ impl MintableAlkane {
             response.alkanes.0.push(self.mint(&context, token_units)?);
         }
 
-        self.set_price(price);
+        let price_ = price.try_into().expect("price overflow");
+        self.set_price(price_);
 
-        let pk = PublicKey::from_slice(pk_compressed_bytes.as_slice())?;
+
+        // reconstruct the public key from the 3 u128's
+        let pk = Self::reconstruct_public_key(pk_version, pk_part1, pk_part2)?;
         self.set_treasury_pubkey_compressed(pk)?;
 
         Ok(response)
+    }
+
+    /// Reconstructs compressed pub key starting from a version (1 byte) first half (16 bytes) and second half (16 bytes)
+    /// Assumes big endian convention
+    fn reconstruct_public_key(version: u128, first_half: u128, second_half: u128) -> Result<PublicKey> {
+        let mut reconstructed_pk_bytes = vec![];
+        reconstructed_pk_bytes.push(*version.to_be_bytes().last().unwrap());
+        first_half.to_be_bytes().iter().for_each(|x| reconstructed_pk_bytes.push(*x));
+        second_half.to_be_bytes().iter().for_each(|x| reconstructed_pk_bytes.push(*x));
+        PublicKey::from_slice(reconstructed_pk_bytes.as_slice()).map_err(|_| {
+            anyhow!("error  reconstructing public key")
+        })
     }
 
     /// Mint new tokens
