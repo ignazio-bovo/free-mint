@@ -4,8 +4,6 @@ use crate::{MintableAlkane, MintableToken, TokenName};
 use alkanes_runtime::runtime::AlkaneResponder;
 use alkanes_runtime::storage::StoragePointer;
 use anyhow::Result;
-use bitcoin::key::{Keypair, Secp256k1};
-use bitcoin::secp256k1::PublicKey;
 use metashrew_support::index_pointer::KeyValuePointer;
 use wasm_bindgen_test::wasm_bindgen_test;
 

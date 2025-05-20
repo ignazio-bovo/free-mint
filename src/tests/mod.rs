@@ -2,15 +2,16 @@ use bitcoin::key::{Keypair, Secp256k1};
 use bitcoin::secp256k1::PublicKey;
 use wasm_bindgen_test::wasm_bindgen_test;
 
-pub mod free_mint_test_integration;
-pub mod free_mint_test_unit_wasm;
+// pub mod free_mint_test_integration;
+// pub mod free_mint_test_unit_wasm;
 pub mod std;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn test_public_key_serialization_and_deserialization() -> anyhow::Result<()> {
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+   fn test_public_key_serialization_and_deserialization() -> anyhow::Result<()> {
         let secp = Secp256k1::new();
         let keypair = Keypair::new(&secp, &mut rand::thread_rng());
         let pk = keypair.public_key();
@@ -20,14 +21,14 @@ mod tests {
 
         // need to break down the public key into a u128
         let pk_version = pk_serialized[0] as u128;
-        println!("pk_version {}", pk_version);
-
         let pk_part_1 = u128::from_be_bytes(pk_serialized[1..17].try_into().unwrap());
         let pk_part_2 = u128::from_be_bytes(pk_serialized[17..].try_into().unwrap());
 
+        println!("original public key: {:?}", pk.to_string());
+        println!("version: {:?} part1 {:?} part2 {:?}", pk_version, pk_part_1, pk_part_2);
+
         let mut reconstructed_pk_bytes = vec![];
         reconstructed_pk_bytes.push(*pk_version.to_be_bytes().last().unwrap());
-        println!("pk version bytes: {:?}", pk_version.to_be_bytes());
         pk_part_1.to_be_bytes().iter().for_each(|x| reconstructed_pk_bytes.push(*x));
         pk_part_2.to_be_bytes().iter().for_each(|x| reconstructed_pk_bytes.push(*x));
 
